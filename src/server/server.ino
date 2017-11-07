@@ -11,30 +11,34 @@ extern "C" {
 #include "ESP8266WebServer.h"
 #include "Adafruit_GFX.h"
 #include "Adafruit_LEDBackpack.h"
-#include "Adafruit_SSD1306.h"
 #include <SimpleTimer.h>
+#include <ArduinoJson.h>
 
 // #define SERIAL_VERBOSE
 
-// Access point credentials
-const char *AP_SSID = "Pukpukus Master";
-const char *AP_PWD  = "pukpukpuk";
+const char *WLAN_SSID = "Pukpukus";
+const char *WLAN_PWD  = "********";
+// NETWORK: Static IP details
+// @see https://forum.arduino.cc/index.php?topic=460595.0
+IPAddress staticIp(      1, 2, 3, 4);
+IPAddress defaultGateway(1, 2, 3, 1);
+IPAddress netmask(255, 255, 255, 0);
 
 bool CABIN_1_CLOSED = false;
 bool CABIN_2_CLOSED = false;
-uint16_t CABIN_1_CLOSED_COUNTER = 0;
-uint16_t CABIN_2_CLOSED_COUNTER = 0;
+uint32_t CABIN_1_CLOSED_COUNTER = 0;
+uint32_t CABIN_2_CLOSED_COUNTER = 0;
 bool CABIN_1_WAS_OPENED = true;
 bool CABIN_2_WAS_OPENED = true;
-bool ALL_DOORS_CLOSED = false;
+uint8_t CABIN_TOTAL_COUNT = 2; // we got total 2 cabins
 
-// SCL GPIO5
-// SDA GPIO4
-#define OLED_RESET 255  // GPIO0
-Adafruit_SSD1306 display(OLED_RESET);
-#if (SSD1306_LCDHEIGHT != 48)
-  #error("Height incorrect, please fix Adafruit_SSD1306.h!");
-#endif
+uint32_t TS_UPTIME_PREVIOUS = 0;
+uint32_t TS_UPTIME_OVERLAPS = 0;
+uint32_t TS_LAST_UPDATED = 0;
+uint32_t TS_LAST_UPDATED_OVERLAPS = 0;
+
+// need this to correct "burn" effect
+uint8_t CURRENT_MATRIX_COLOR = 0;
 
 // https://www.adafruit.com/product/902
 Adafruit_BicolorMatrix matrix = Adafruit_BicolorMatrix();
@@ -49,25 +53,16 @@ uint8_t matrixLedOffXIndex = 0;
 uint8_t matrixLedOffYIndex = 0;
 
 /**
-API:
-/
-/clients
-/update?cabin1=1|0cabin2=1|0
+    APIs:
+    /
+    /clients
+    /update?cabin1=1|0&cabin2=1|0
+    /status
  */
 
 
 
 void setup() {
-  setupDisplay();
-
-  display.clearDisplay();
-  display.setTextSize(1); // 6 rows, 10 cols
-  display.setTextColor(WHITE);
-  display.setCursor(0, 0);
-  display.print("Pukpukus\n");
-  display.print("setup\n");
-  display.display();
-
   #ifdef SERIAL_VERBOSE
     Serial.begin(115200);
     // Serial.setDebugOutput(true);
@@ -80,8 +75,6 @@ void setup() {
     Serial.println("Setting up matrix");
   #endif
   setupMatrix();
-  display.print("- Matrix\n");
-  display.display();
   #ifdef SERIAL_VERBOSE
     Serial.println("Matrix test");
   #endif
@@ -92,13 +85,17 @@ void setup() {
   #endif
 
   #ifdef SERIAL_VERBOSE
-    Serial.println("Configuring access point...");
+    Serial.println("Connecting to WIFI...");
   #endif
 
-  // WiFi.softAP(AP_SSID);
-  display.print("- AP\n");
-  display.display();
-  WiFi.softAP(AP_SSID, AP_PWD);
+  /* Explicitly set the ESP8266 to be a WiFi-client, otherwise, it by default,
+     would try to act as both a client and an access-point and could cause
+     network-issues with your other WiFi-devices on your WiFi-network. */
+  WiFi.disconnect();
+  WiFi.setAutoConnect(true);
+  WiFi.mode(WIFI_STA);
+  WiFi.config(staticIp, defaultGateway, netmask);
+  WiFi.begin(WLAN_SSID, WLAN_PWD);
 
   // IPAddress myIP = WiFi.softAPIP();
   #ifdef SERIAL_VERBOSE
@@ -107,8 +104,6 @@ void setup() {
   #endif
 
   setupServerHandlers();
-  display.print("- HTTP\n");
-  display.display();
   server.begin();
   #ifdef SERIAL_VERBOSE
     Serial.println("HTTP server started");
@@ -120,40 +115,35 @@ void setup() {
     Serial.println();
   #endif
 
-  display.print("setup done");
-  display.display();
   delay(2000);
 }
 
 void setupServerHandlers() {
-  server.on("/",        handleStatus);
+  server.on("/",        handleDefault);
   server.on("/devices", handleDevices);
   server.on("/update",  handleUpdate);
+  server.on("/status",  handleStatus);
   server.onNotFound(handleNotFound);
-}
-
-void setupDisplay() {
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C); // 0x3C or 0x3D
-  display.clearDisplay();
-  display.display();
 }
 
 void setupMatrix() {
    matrix.begin(0x70); // 0x70 - 0x77
-   matrix.setBrightness(12); // 0 - 15, with 1 too much high freq noice from holtek
+   matrix.setBrightness(13); // 0 - 15, with 1 too much high freq noice from holtek
 }
 
 void matrixSelfTest() {
   matrix.clear();
-  matrix.fillRect(0, 0, 8, 8, LED_GREEN);
-  matrix.writeDisplay();
-  delay(500);
-  matrix.fillRect(0, 0, 8, 8, LED_YELLOW);
-  matrix.writeDisplay();
-  delay(500);
-  matrix.fillRect(0, 0, 8, 8, LED_RED);
-  matrix.writeDisplay();
-  delay(500);
+  int8_t color = 0;
+  for (int8_t i = 1; i < 4; i++) {
+    switch (i) {
+      case 1: color = LED_GREEN;  break;
+      case 2: color = LED_YELLOW; break;
+      case 3: color = LED_RED;    break;
+    }
+    matrix.fillRect(0, 0, 8, 8, color);
+    matrix.writeDisplay();
+    delay(500);
+  }
   matrix.fillRect(0, 0, 8, 8, 0);
   matrix.writeDisplay();
 }
@@ -162,8 +152,6 @@ void setupTimers() {
   timerMatrixId = timerMatrix.setInterval(1000L, showOnMatrixSinceUpdated);
   timerMatrix.disable(timerMatrixId);
 }
-
-
 
 void loop() {
   server.handleClient();
@@ -206,19 +194,13 @@ void handleUpdate() {
 
   timerMatrix.disable(timerMatrixId);
 
-  uint8_t cabinsTotal = 2;
   uint8_t cabinsTotalClosed = 0;
-  String response;
 
   if (server.arg("cabin1") == "1") {
     CABIN_1_CLOSED = true;
     cabinsTotalClosed++;
     if (CABIN_1_WAS_OPENED) {
       CABIN_1_WAS_OPENED = false;
-      // reset counter as we have limited space to show
-      if (CABIN_1_CLOSED_COUNTER == 999) {
-        CABIN_1_CLOSED_COUNTER = 0;
-      }
       CABIN_1_CLOSED_COUNTER++;
     }
   } else {
@@ -231,15 +213,18 @@ void handleUpdate() {
     cabinsTotalClosed++;
     if (CABIN_2_WAS_OPENED) {
       CABIN_2_WAS_OPENED = false;
-      if (CABIN_2_CLOSED_COUNTER == 999) {
-        CABIN_2_CLOSED_COUNTER = 0;
-      }
       CABIN_2_CLOSED_COUNTER++;
     }
   } else {
     CABIN_2_CLOSED = false;
     CABIN_2_WAS_OPENED = true;
   }
+
+  // empty respose was bad while testing via browser, so just "ok"
+  server.send(200, "text/plain", "ok");
+
+  TS_LAST_UPDATED = millisWithOverlap();
+  TS_LAST_UPDATED_OVERLAPS = TS_UPTIME_OVERLAPS;
 
   #ifdef SERIAL_VERBOSE
     Serial.printf("CABIN-1: %d", CABIN_1_CLOSED ? 1 : 0);
@@ -248,50 +233,41 @@ void handleUpdate() {
     Serial.println();
   #endif
 
-  if (cabinsTotal == cabinsTotalClosed) {
-    ALL_DOORS_CLOSED = true;
-  } else {
-    ALL_DOORS_CLOSED = false;
-  }
+  switch (CABIN_TOTAL_COUNT - cabinsTotalClosed) {
+    case 0: // all closed
+      CURRENT_MATRIX_COLOR = LED_RED;
+      matrixSetColor(CURRENT_MATRIX_COLOR);
+      break;
 
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.print("Pukpukus\n");
-  display.printf("\nC1: %s %d", (CABIN_1_CLOSED) ? "CL" : "OP", CABIN_1_CLOSED_COUNTER);
-  display.printf("\nC2: %s %d", (CABIN_2_CLOSED) ? "CL" : "OP", CABIN_2_CLOSED_COUNTER);
-  if (ALL_DOORS_CLOSED) {
-    display.printf("\n\n%d occupied", cabinsTotalClosed);
-  } else {
-    display.printf("\n\n%d free", cabinsTotal - cabinsTotalClosed);
-  }
-  display.display();
+    case 1: // one opened
+      CURRENT_MATRIX_COLOR = LED_YELLOW;
+      matrixSetColor(CURRENT_MATRIX_COLOR);
+      break;
 
-  if (ALL_DOORS_CLOSED) {
-    response = "occupied";
-    matrixSetColor(LED_RED);
-  } else {
-    response = "free";
-    matrixSetColor(LED_GREEN);
+    default: // otherwise
+      CURRENT_MATRIX_COLOR = LED_GREEN;
+      matrixSetColor(CURRENT_MATRIX_COLOR);
+      break;
   }
-
-  server.send(200, "text/plain", response);
 
   timerMatrix.enable(timerMatrixId);
   matrixLedOffXIndex = 0;
   matrixLedOffYIndex = 0;
+}
 
-  // matrixLedLocations = {
-  //   11, 12, 13, 14, 15, 16, 17, 18,
-  //   21, 22, 23, 24, 25, 26, 27, 28,
-  //   31, 32, 33, 34, 35, 36, 37, 38,
-  //   41, 42, 43, 44, 45, 46, 47, 48,
-  //   51, 52, 53, 54, 55, 56, 57, 58,
-  //   61, 62, 63, 64, 65, 66, 67, 68,
-  //   71, 72, 73, 74, 75, 76, 77, 78,
-  //   81, 82, 83, 84, 85, 86, 87, 88
-  // };
-  // matrixLedLocationsCurrentIndex = 0;
-  // matrixLedLocations = shuffleArray(matrixLedLocations, sizeof(matrixLedLocations));
+void handleDefault() {
+  #ifdef SERIAL_VERBOSE
+    Serial.println("handleDefault");
+  #endif
+
+  String response;
+  char buffer[16];
+  sprintf(buffer, "\nC1: %s %d", (CABIN_1_CLOSED) ? "CL" : "OP", CABIN_1_CLOSED_COUNTER);
+  response+= buffer;
+  sprintf(buffer, "\nC2: %s %d", (CABIN_2_CLOSED) ? "CL" : "OP", CABIN_2_CLOSED_COUNTER);
+  response+= buffer;
+
+  server.send(200, "text/plain", response);
 }
 
 void handleStatus() {
@@ -299,13 +275,32 @@ void handleStatus() {
     Serial.println("handleStatus");
   #endif
 
-  String response = (ALL_DOORS_CLOSED) ? "occupied" : "free";
-  char buffer[16];
-  sprintf(buffer, "\nC1: %s %d", (CABIN_1_CLOSED) ? "CL" : "OP", CABIN_1_CLOSED_COUNTER);
-  response+= buffer;
-  sprintf(buffer, "\nC2: %s %d", (CABIN_2_CLOSED) ? "CL" : "OP", CABIN_2_CLOSED_COUNTER);
-  response+= buffer;
+  String response;
 
+  // https://bblanchon.github.io/ArduinoJson/assistant/
+  StaticJsonBuffer<400> jsonBuffer;
+
+  JsonObject& root = jsonBuffer.createObject();
+
+  JsonArray& states = root.createNestedArray("states");
+
+  JsonObject& c1 = states.createNestedObject();
+  c1["name"] = "c1";
+  c1["is-open"] = !CABIN_1_CLOSED;
+  c1["counter-closed"] = CABIN_1_CLOSED_COUNTER;
+
+  JsonObject& c2 = states.createNestedObject();
+  c2["name"] = "c2";
+  c2["is-open"] = !CABIN_2_CLOSED;
+  c2["counter-closed"] = CABIN_2_CLOSED_COUNTER;
+
+  root["uptime"]          = millisWithOverlap();
+  root["uptime-overlaps"] = TS_UPTIME_OVERLAPS;
+
+  root["last-updated"]          = TS_LAST_UPDATED;
+  root["last-updated-overlaps"] = TS_LAST_UPDATED_OVERLAPS;
+
+  root.printTo(response);
   server.send(200, "text/plain", response);
 }
 
@@ -373,25 +368,11 @@ void matrixSetColor(uint8_t color) {
   }
 }
 
-// https://forum.arduino.cc/index.php?topic=345964.0
-void shuffleArray(int * array, int size) {
-  randomSeed(analogRead(A0));
-
-  int last = 0;
-  int temp = array[last];
-  for (int i = 0; i < size; i++) {
-    int index = random(size);
-    array[last] = array[index];
-    last = index;
-  }
-  array[last] = temp;
-}
-
 void showOnMatrixSinceUpdated() {
   // String target = (String) matrixLedLocations[matrixLedLocationsCurrentIndex];
   // matrixLedLocationsCurrentIndex++;
 
-  matrix.drawPixel(matrixLedOffXIndex, matrixLedOffYIndex, LED_YELLOW);
+  matrix.drawPixel(matrixLedOffXIndex, matrixLedOffYIndex, CURRENT_MATRIX_COLOR == LED_YELLOW ? LED_RED : LED_YELLOW);
   matrix.writeDisplay();
   delay(15);
   matrix.drawPixel(matrixLedOffXIndex, matrixLedOffYIndex, 0);
@@ -406,4 +387,13 @@ void showOnMatrixSinceUpdated() {
   if (matrixLedOffYIndex > 7) {
     timerMatrix.disable(timerMatrixId);
   }
+}
+
+uint32_t millisWithOverlap() {
+  uint32_t uptime = millis();
+  if (TS_UPTIME_PREVIOUS > uptime) {
+    TS_LAST_UPDATED_OVERLAPS++;
+  }
+  TS_UPTIME_PREVIOUS = uptime;
+  return uptime;
 }
