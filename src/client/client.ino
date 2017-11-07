@@ -11,13 +11,18 @@ const int BUTTON_PIN    =  4; // ?
 const int LED_GREEN_PIN = 12; // D6 = GPIO15
 const int LED_RED_PIN   = 15; // D8 = GPIO12
 const int LED_BLUE_PIN  = 13; // D7 = GPIO13
-const int CABIN_1_PIN    =  5; // D1 = GPIO5
-const int CABIN_2_PIN    = 14; // D5 = GPIO14
+const int CABIN_1_PIN   =  5; // D1 = GPIO5
+const int CABIN_2_PIN   = 14; // D5 = GPIO14
 
-const char* WLAN_SSID = "Pukpukus Master";
-const char* WLAN_PWD  = "pukpukpuk";
+const char *WLAN_SSID = "Pukpukus";
+const char *WLAN_PWD  = "********";
+// NETWORK: Static IP details
+// @see https://forum.arduino.cc/index.php?topic=460595.0
+IPAddress staticIp(      1, 2, 3, 5);
+IPAddress defaultGateway(1, 2, 3, 1);
+IPAddress netmask(255, 255, 255, 0);
 
-const char* MASTER_HOST = "192.168.4.1";
+const char* MASTER_HOST = "1.2.3.4";
     uint8_t MASTER_PORT = 80;
 
 void setup() {
@@ -44,7 +49,7 @@ void setup() {
   WiFi.disconnect();
   WiFi.setAutoConnect(true);
   WiFi.mode(WIFI_STA);
-
+  WiFi.config(staticIp, defaultGateway, netmask);
   // https://github.com/esp8266/Arduino/issues/2186
   // WiFi.setOutputPower(0);
   // WiFi.begin(ssid);
