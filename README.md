@@ -20,5 +20,8 @@ Traffic light based on readings from door sensors.
 ![](20171107_133525.jpg?raw=true)
 ![](20171107_133617.jpg?raw=true)
 
+# From install step
+![](IMG_1816.jpg?raw=true)
+
 # Client Status LED (video)
 https://youtu.be/tf3hE_C9opg
