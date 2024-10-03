@@ -15,6 +15,10 @@ Traffic light based on readings from door sensors.
 
 # Server
 ![](20170726_120504.jpg?raw=true)
+C1 = cabin 1 (left)
+C2 = cabin 2 (right)
+OP = open counter
+bottom line - quick status
 
 # Client
 ![](20171107_133525.jpg?raw=true)
