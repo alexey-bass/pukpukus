@@ -29,3 +29,7 @@ Traffic light based on readings from door sensors.
 
 # Client Status LED (video)
 https://youtu.be/tf3hE_C9opg
+
+# UI version
+![](Screenshot_20241002_081219_Telegram.jpg)
+Special thanks to Shimi Shteinman
